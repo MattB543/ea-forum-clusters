@@ -18,8 +18,23 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import altair as alt
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg2  # psycopg 2.x
+    from psycopg2.extras import RealDictCursor
+    HAVE_PSYCOPG2 = True
+except Exception:  # pragma: no cover
+    psycopg2 = None
+    RealDictCursor = None
+    HAVE_PSYCOPG2 = False
+
+try:
+    import psycopg  # psycopg 3.x
+    from psycopg.rows import dict_row
+    HAVE_PSYCOPG = True
+except Exception:  # pragma: no cover
+    psycopg = None
+    dict_row = None
+    HAVE_PSYCOPG = False
 from dotenv import load_dotenv, find_dotenv
 
 
@@ -93,7 +108,11 @@ def connect_db():
     if not url:
         return None
     try:
-        return psycopg2.connect(url, cursor_factory=RealDictCursor)
+        if HAVE_PSYCOPG2:
+            return psycopg2.connect(url, cursor_factory=RealDictCursor)
+        if HAVE_PSYCOPG:
+            return psycopg.connect(url, row_factory=dict_row)
+        return None
     except Exception:
         return None
 
@@ -201,7 +220,7 @@ def main():
             )
             .properties(height=200)
         )
-        st.altair_chart(bar, use_container_width=True)
+        st.altair_chart(bar, width="stretch")
 
         c1, c2 = st.columns(2)
         c1.metric("Avg Base (±Std)", format_float(r.get("avg_base_score")), f"±{format_float(r.get('stddev_base_score'))}")
@@ -261,7 +280,7 @@ def main():
                 )
                 .properties(height={"step": 24})
             )
-            st.altair_chart(left_chart, use_container_width=True)
+            st.altair_chart(left_chart, width="stretch")
 
         with col_right:
             st.markdown("**Avg Base Score by Cluster**")
@@ -283,7 +302,7 @@ def main():
                 )
                 .properties(height={"step": 24})
             )
-            st.altair_chart(right_chart, use_container_width=True)
+            st.altair_chart(right_chart, width="stretch")
 
         # Second row: full-width table with rounding and native progress coloring
         st.markdown("**Table**")
@@ -314,7 +333,7 @@ def main():
 
             st.dataframe(
                 display_df,
-                use_container_width=True,
+                width="stretch",
                 height=min(900, 80 + 24 * len(display_df)),
                 column_config={
                     "cluster_name": st.column_config.TextColumn("Cluster"),
@@ -371,7 +390,7 @@ def main():
                 else:
                     st.dataframe(
                         posts_df[[c for c in ["posted_at", "title", "author_display_name", "base_score", "score"] if c in posts_df.columns]],
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
 
