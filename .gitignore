@@ -71,3 +71,5 @@ htmlcov/
 ############################
 .DS_Store
 Thumbs.db
+
+secrets.toml
