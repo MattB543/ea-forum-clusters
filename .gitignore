@@ -1,0 +1,73 @@
+############################
+# Python                     
+############################
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.conda/
+.python-version
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+*.egg
+*.spec
+
+# Testing / coverage
+.pytest_cache/
+.nox/
+.tox/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Type checkers / linters
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs / DB
+*.log
+*.sqlite3
+*.db
+
+############################
+# Environment Files
+############################
+.env
+.env.*
+*.env
+.envrc
+
+# Streamlit secrets (if used)
+.streamlit/secrets.toml
+
+############################
+# Editors / IDEs
+############################
+.vscode/
+.idea/
+*.iml
+.spyproject/
+.ropeproject/
+
+############################
+# OS junk
+############################
+.DS_Store
+Thumbs.db
