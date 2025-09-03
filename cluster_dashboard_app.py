@@ -18,6 +18,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import altair as alt
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv, find_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,6 +41,112 @@ def format_float(x, ndigits=2):
         return f"{float(x):.{ndigits}f}"
     except Exception:
         return "N/A"
+
+
+def get_database_url() -> str:
+    """Resolve DATABASE_URL in a Streamlit-friendly way.
+
+    Priority order:
+    1) st.secrets["DATABASE_URL"]
+    2) st.secrets["connections"]["postgres" or "pg" or "default"]["url" or "DATABASE_URL"]
+    3) environment variable DATABASE_URL
+    4) .env file (loaded via python-dotenv)
+    """
+    # 1) Direct in Streamlit secrets
+    try:
+        if "DATABASE_URL" in st.secrets:
+            val = st.secrets["DATABASE_URL"]
+            if val:
+                return str(val)
+        # 2) Common nested patterns
+        if "connections" in st.secrets:
+            conns = st.secrets["connections"]
+            for key in ("postgres", "pg", "default"):
+                if key in conns:
+                    cfg = conns[key]
+                    # prefer 'url', fallback to 'DATABASE_URL'
+                    if "url" in cfg and cfg["url"]:
+                        return str(cfg["url"])
+                    if "DATABASE_URL" in cfg and cfg["DATABASE_URL"]:
+                        return str(cfg["DATABASE_URL"])
+    except Exception:
+        pass
+
+    # 3) Env var
+    val = os.getenv("DATABASE_URL", "").strip()
+    if val:
+        return val
+
+    # 4) Load from .env (search upwards) then read env again
+    try:
+        load_dotenv(find_dotenv(), override=False)
+        val = os.getenv("DATABASE_URL", "").strip()
+        if val:
+            return val
+    except Exception:
+        pass
+    return ""
+
+
+def connect_db():
+    url = get_database_url()
+    if not url:
+        return None
+    try:
+        return psycopg2.connect(url, cursor_factory=RealDictCursor)
+    except Exception:
+        return None
+
+
+def fetch_cluster_posts(level: int, cluster_id: int, sort_by: str = "score") -> pd.DataFrame:
+    """Fetch posts for a given cluster level/id from the DB, sorted by score or date.
+
+    Returns an empty DataFrame if DB is not reachable.
+    """
+    conn = connect_db()
+    if conn is None:
+        return pd.DataFrame()
+    id_col = f"ea_cluster_{int(level)}"
+    order = "score DESC NULLS LAST" if sort_by == "score" else "posted_at DESC NULLS LAST"
+    sql = f"""
+        SELECT
+            post_id,
+            title,
+            author_display_name,
+            posted_at,
+            base_score,
+            score
+        FROM fellowship_mvp
+        WHERE {id_col} = %s
+        ORDER BY {order}
+        LIMIT 500
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (int(cluster_id),))
+            rows = cur.fetchall()
+        conn.close()
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            # Format types and rounding
+            if "posted_at" in df.columns:
+                try:
+                    df["posted_at"] = pd.to_datetime(df["posted_at"]).dt.date
+                except Exception:
+                    pass
+            for c in ["base_score"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce").round(0).astype("Int64")
+            for c in ["score"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce").round(2)
+        return df
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return pd.DataFrame()
 
 
 def main():
@@ -226,6 +335,45 @@ def main():
                     ),
                 },
             )
+
+        # Quick details drawer for posts in a selected cluster (DB-backed)
+        with st.container():
+            st.markdown("")
+            st.markdown("**View Posts in Cluster**")
+            # Build selector (sorted by posts desc)
+            if not df.empty and "post_count" in df.columns:
+                picker_df = df.sort_values(by="post_count", ascending=False)[["cluster_id", "cluster_name"]].copy()
+                select_options = [
+                    f"{int(c_id)} — {name}"
+                    for c_id, name in zip(picker_df["cluster_id"], picker_df["cluster_name"])
+                ]
+            else:
+                select_options = []
+            sel = st.selectbox(
+                "Select a cluster",
+                options=select_options,
+                index=0 if select_options else None,
+                key=f"sel_{int(level)}",
+            )
+            sort_choice = st.radio(
+                "Sort posts by",
+                options=("score", "date"),
+                format_func=lambda x: "Score (desc)" if x == "score" else "Date (newest)",
+                horizontal=True,
+                key=f"sort_{int(level)}",
+            )
+            if sel:
+                # Parse selection
+                cluster_id = int(sel.split(" — ", 1)[0])
+                posts_df = fetch_cluster_posts(int(level), cluster_id, sort_by=sort_choice)
+                if posts_df.empty:
+                    st.info("No posts found or database unavailable. Ensure DATABASE_URL is set if you want this feature.")
+                else:
+                    st.dataframe(
+                        posts_df[[c for c in ["posted_at", "title", "author_display_name", "base_score", "score"] if c in posts_df.columns]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
             # Download table for this level
             csv_bytes = display_df.to_csv(index=False).encode("utf-8")
